@@ -18,6 +18,14 @@
   );
   const BY_ID = new Map(ALL.map((c) => [c.id, c]));
   const pad = (n) => String(n).padStart(2, "0");
+  // 1 вопрос, 2 вопроса, 5 вопросов, 21 вопрос.
+  function plural(n, one, few, many) {
+    const d = n % 10;
+    const h = n % 100;
+    if (d === 1 && h !== 11) return one;
+    if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return few;
+    return many;
+  }
 
   // ---------- хранилище ----------
   function load() {
@@ -31,6 +39,8 @@
   const db = load();
   if (!db.cards || typeof db.cards !== "object") db.cards = {};
   if (!db.prefs || typeof db.prefs !== "object") db.prefs = {};
+  // Сессия, начатая в прежней версии с вопросами, которых больше нет (темы 11–21), — заново.
+  if (db.session && !(Array.isArray(db.session.queue) && db.session.queue.every((id) => BY_ID.has(id)))) delete db.session;
   function save() {
     try {
       localStorage.setItem(STORE, JSON.stringify(db));
@@ -151,7 +161,7 @@
     const showInstall = isIOS() && !standalone() && !db.prefs.hideInstall;
     app.innerHTML =
       '<div class="page">' +
-      '<header class="hero"><p class="eyebrow">Итоговая · ' + TOPICS.length + " тема · " + ALL.length + " вопросов</p>" +
+      '<header class="hero"><p class="eyebrow">Итоговая · темы 1–' + TOPICS.length + " · " + ALL.length + " " + plural(ALL.length, "вопрос", "вопроса", "вопросов") + "</p>" +
       "<h1>Обработка сигналов и изображений</h1></header>" +
       (showInstall
         ? '<div class="install" id="install"><p>Поставь на экран «Домой»: внизу Safari нажми <span class="share" aria-hidden="true"></span> <b>Поделиться</b>, потом <b>«На экран „Домой“»</b>. Будет работать без интернета.</p><button class="x" id="hideInstall" aria-label="Скрыть">✕</button></div>'
@@ -464,6 +474,14 @@
   route();
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    // Пришла новая версия (новый service worker взял страницу) — один раз перезагрузить, чтобы сразу её показать.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
     window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
   }
 })();
