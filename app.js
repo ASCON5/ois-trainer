@@ -1,4 +1,4 @@
-// ОИС — тренажёр: карточки к итоговой. Всё работает на телефоне без сети; прогресс — в localStorage.
+// Тренажёр к итоговым: карточки по предметам (ОИС, Embedded systems). Работает без сети; прогресс — в localStorage.
 //
 // Карточка: «новая» (ни разу не отвечал), «учу» (ошибся и ещё не закрепил), «знаю».
 // Коробки как у Лейтнера: b = 0…3. Знал с первого раза — сразу b = 2 («знаю»). Ошибся — b = 0, и в этой же
@@ -7,16 +7,29 @@
 (function () {
   "use strict";
 
-  const STORE = "ois-app.v1";
+  const STORE = "ois-app.v1"; // имя прежнее: в нём прогресс по ОИС с первой версии
   const SESSION_SIZE = 15;
   const RETRY_GAP = 3;
 
-  // ---------- данные ----------
-  const ALL = [];
-  TOPICS.forEach((t, ti) =>
-    t.q.forEach((q, qi) => ALL.push({ id: ti + "-" + qi, ti, qi, q: q[0], key: q[1], more: q[2] || "" }))
-  );
-  const BY_ID = new Map(ALL.map((c) => [c.id, c]));
+  // ---------- предметы и карточки ----------
+  // id карточек: у ОИС «тема-вопрос» (как в первой версии — прогресс сохраняется), у Embedded «e<№ в билете>».
+  const SUBJECTS = [
+    { id: "ois", tab: "ОИС", title: "Обработка сигналов и изображений", scope: "темы 1–10", topics: TOPICS, cid: (ti, qi) => ti + "-" + qi },
+    { id: "emb", tab: "Embedded", title: "Встроенные системы", scope: "Embedded systems", topics: EMB_TOPICS, cid: (ti, qi, q) => "e" + q[3] },
+  ];
+  const SUBJ = new Map(SUBJECTS.map((s) => [s.id, s]));
+  const BY_ID = new Map();
+  for (const subj of SUBJECTS) {
+    subj.cards = [];
+    subj.topics.forEach((t, ti) =>
+      t.q.forEach((q, qi) => {
+        const no = subj.id === "emb" ? q[3] : null;
+        const c = { id: subj.cid(ti, qi, q), subj: subj.id, ti, qi, q: q[0], key: q[1], more: q[2] || "", no, uz: no ? UZ[no - 1] || "" : "" };
+        subj.cards.push(c);
+        BY_ID.set(c.id, c);
+      })
+    );
+  }
   const pad = (n) => String(n).padStart(2, "0");
   // 1 вопрос, 2 вопроса, 5 вопросов, 21 вопрос.
   function plural(n, one, few, many) {
@@ -39,12 +52,22 @@
   const db = load();
   if (!db.cards || typeof db.cards !== "object") db.cards = {};
   if (!db.prefs || typeof db.prefs !== "object") db.prefs = {};
-  // Сессия, начатая в прежней версии с вопросами, которых больше нет (темы 11–21), — заново.
-  if (db.session && !(Array.isArray(db.session.queue) && db.session.queue.every((id) => BY_ID.has(id)))) delete db.session;
+  // Сессия прежней версии (без предмета или с вопросами, которых больше нет) — заново.
+  if (db.session && !(SUBJ.has(db.session.subj) && Array.isArray(db.session.queue) && db.session.queue.every((id) => BY_ID.has(id)))) {
+    delete db.session;
+    save();
+  }
   function save() {
     try {
       localStorage.setItem(STORE, JSON.stringify(db));
     } catch (e) {}
+  }
+  let S = SUBJ.get(db.prefs.subj) || SUBJECTS[0];
+  function setSubject(id) {
+    if (!SUBJ.has(id)) return;
+    S = SUBJ.get(id);
+    db.prefs.subj = id;
+    save();
   }
 
   const blank = () => ({ b: 0, ok: 0, bad: 0, t: 0 });
@@ -122,15 +145,30 @@
     return html;
   }
   const norm = (s) => s.toLowerCase().replace(/ё/g, "е").replace(/[§*]/g, "");
-  const HAY = new Map(ALL.map((c) => [c.id, norm(c.q + " " + c.key + " " + c.more + " " + TOPICS[c.ti].t)]));
+  const HAY = new Map([...BY_ID.values()].map((c) => [c.id, norm(c.q + " " + c.uz + " " + c.key + " " + c.more + " " + SUBJ.get(c.subj).topics[c.ti].t)]));
 
   // ---------- общие куски ----------
   const app = document.getElementById("app");
   const LABEL = { know: "Знаю", learn: "Учу", new: "Новый" };
+  const topicOf = (c) => SUBJ.get(c.subj).topics[c.ti];
+  const topicCards = (subj, ti) => subj.cards.filter((x) => x.ti === ti);
   function bar(c, total, cls) {
     const w = (n) => ((n / total) * 100).toFixed(2) + "%";
     return '<div class="' + cls + '"><i class="k" style="width:' + w(c.know) + '"></i><i class="l" style="width:' + w(c.learn) + '"></i></div>';
   }
+  function legend(c) {
+    return (
+      '<div class="legend"><span><i class="dot know"></i><b>' + c.know + '</b> знаю</span><span><i class="dot learn"></i><b>' + c.learn +
+      '</b> учу</span><span><i class="dot"></i><b>' + c.new + "</b> новых</span></div>"
+    );
+  }
+  // «№ 17 · 04 · Тема» — номер из билета есть только у Embedded.
+  function meta(c, extra) {
+    return (
+      '<p class="meta">' + (c.no ? '<span class="no">№ ' + c.no + "</span> · " : "") + pad(c.ti + 1) + " · " + esc(topicOf(c).t) + (extra || "") + "</p>"
+    );
+  }
+  const uzLine = (c) => (c.uz ? '<p class="uz" lang="uz">' + esc(c.uz) + "</p>" : "");
   function answerHtml(c, open) {
     return (
       '<section class="key"><span class="lbl">Суть</span><div class="txt">' + inl(c.key) + "</div></section>" +
@@ -155,27 +193,29 @@
   let fromSearch = false;
 
   function viewHome() {
-    const c = counts(ALL);
+    const c = counts(S.cards);
     const toLearn = c.learn + c.new;
-    const learnN = Math.min(SESSION_SIZE, ALL.length);
+    const learnN = Math.min(SESSION_SIZE, S.cards.length);
     const showInstall = isIOS() && !standalone() && !db.prefs.hideInstall;
     app.innerHTML =
       '<div class="page">' +
-      '<header class="hero"><p class="eyebrow">Итоговая · темы 1–' + TOPICS.length + " · " + ALL.length + " " + plural(ALL.length, "вопрос", "вопроса", "вопросов") + "</p>" +
-      "<h1>Обработка сигналов и изображений</h1></header>" +
+      '<nav class="subjects" aria-label="Предмет">' +
+      SUBJECTS.map((x) => '<a href="#/s/' + x.id + '"' + (x === S ? ' class="on" aria-current="page"' : "") + ">" + x.tab + "</a>").join("") +
+      "</nav>" +
+      '<header class="hero"><p class="eyebrow">Итоговая · ' + S.scope + " · " + S.cards.length + " " + plural(S.cards.length, "вопрос", "вопроса", "вопросов") + "</p>" +
+      "<h1>" + S.title + "</h1></header>" +
       (showInstall
         ? '<div class="install" id="install"><p>Поставь на экран «Домой»: внизу Safari нажми <span class="share" aria-hidden="true"></span> <b>Поделиться</b>, потом <b>«На экран „Домой“»</b>. Будет работать без интернета.</p><button class="x" id="hideInstall" aria-label="Скрыть">✕</button></div>'
         : "") +
-      '<section class="stats" aria-label="Прогресс">' + bar(c, ALL.length, "bar") +
-      '<div class="legend"><span><i class="dot know"></i><b>' + c.know + "</b> знаю</span><span><i class=\"dot learn\"></i><b>" + c.learn +
-      "</b> учу</span><span><i class=\"dot\"></i><b>" + c.new + "</b> новых</span></div></section>" +
+      '<section class="stats" aria-label="Прогресс">' + bar(c, S.cards.length, "bar") + legend(c) + "</section>" +
       '<div class="actions">' +
-      '<a class="btn btn-primary" href="#/learn/all">' + (toLearn ? "Учить · " + learnN + " карточек" : "Повторить · " + learnN + " карточек") + "</a>" +
-      '<div class="row"><a class="btn btn-soft" href="#/learn/hard"' + (c.learn ? "" : ' aria-disabled="true"') + ">Трудные · " + c.learn + "</a>" +
+      '<a class="btn btn-primary" href="#/learn/' + S.id + '/all">' + (toLearn ? "Учить · " : "Повторить · ") + learnN + " " + plural(learnN, "карточка", "карточки", "карточек") + "</a>" +
+      '<div class="row"><a class="btn btn-soft" href="#/learn/' + S.id + '/hard"' + (c.learn ? "" : ' aria-disabled="true"') + ">Трудные · " + c.learn + "</a>" +
       '<button class="btn btn-soft" id="rand">Случайный</button></div></div>' +
-      '<input class="search" id="search" type="search" placeholder="Поиск: Котельников, Собель, MFCC…" autocomplete="off" enterkeyhint="search" aria-label="Поиск по вопросам и ответам">' +
+      '<input class="search" id="search" type="search" placeholder="' + (S.id === "emb" ? "Поиск: шина, кэш или № вопроса" : "Поиск: Котельников, Собель, MFCC…") +
+      '" autocomplete="off" enterkeyhint="search" aria-label="Поиск по вопросам и ответам">' +
       '<div id="list"></div>' +
-      '<footer class="foot"><button class="link" id="reset">Сбросить прогресс</button><p>Прогресс хранится только на этом устройстве.</p></footer>' +
+      '<footer class="foot"><button class="link" id="reset">Сбросить прогресс · ' + S.tab + "</button><p>Прогресс хранится только на этом устройстве.</p></footer>" +
       "</div>";
     const search = document.getElementById("search");
     search.value = query;
@@ -184,15 +224,15 @@
       paintList();
     });
     document.getElementById("rand").addEventListener("click", () => {
-      const pool = ALL.filter((x) => status(x.id) !== "know");
-      const list = pool.length ? pool : ALL;
+      const pool = S.cards.filter((x) => status(x.id) !== "know");
+      const list = pool.length ? pool : S.cards;
       fromSearch = false;
       location.hash = "#/q/" + list[Math.floor(Math.random() * list.length)].id;
     });
     document.getElementById("reset").addEventListener("click", () => {
-      if (!confirm("Сбросить все отметки «знаю» и «учу»? Это не отменить.")) return;
-      db.cards = {};
-      delete db.session;
+      if (!confirm("Сбросить отметки «знаю» и «учу» по предмету «" + S.tab + "»? Это не отменить.")) return;
+      for (const x of S.cards) delete db.cards[x.id];
+      if (db.session && db.session.subj === S.id) delete db.session;
       save();
       viewHome();
     });
@@ -212,8 +252,10 @@
     if (!box) return;
     const q = norm(query.trim());
     if (q) {
+      // Только число (или «№ 17») у предмета с номерами билета — ищем по номеру, а не по тексту (иначе «17» найдёт DO-178C).
+      const num = /^№?\s*\d+$/.test(q) && S.cards.some((c) => c.no) ? +q.replace(/\D/g, "") : null;
       const words = q.split(/\s+/);
-      const hits = ALL.filter((c) => words.every((w) => HAY.get(c.id).includes(w)));
+      const hits = S.cards.filter((c) => (num !== null ? c.no === num : words.every((w) => HAY.get(c.id).includes(w))));
       box.innerHTML =
         '<h2 class="section-title">Найдено: ' + hits.length + "</h2>" +
         (hits.length
@@ -222,8 +264,8 @@
               .slice(0, 40)
               .map(
                 (c) =>
-                  '<a class="qrow" data-search href="#/q/' + c.id + '"><i class="dot ' + status(c.id) + '"></i><span class="tt">' + esc(c.q) +
-                  '<span class="tsmall">' + pad(c.ti + 1) + " · " + esc(TOPICS[c.ti].t) + "</span></span></a>"
+                  '<a class="qrow" data-search href="#/q/' + c.id + '"><i class="dot ' + status(c.id) + '"></i><span class="tt">' + (c.no ? "№ " + c.no + ". " : "") + esc(c.q) +
+                  '<span class="tsmall">' + pad(c.ti + 1) + " · " + esc(topicOf(c).t) + "</span></span></a>"
               )
               .join("") +
             "</div>"
@@ -233,32 +275,36 @@
     }
     box.innerHTML =
       '<h2 class="section-title">Темы</h2><div class="list">' +
-      TOPICS.map((t, ti) => {
-        const qs = ALL.filter((c) => c.ti === ti);
-        const c = counts(qs);
-        return (
-          '<a class="trow" href="#/topic/' + ti + '"><span class="tno">' + pad(ti + 1) + '</span><span class="tt">' + esc(t.t) +
-          bar(c, qs.length, "tbar") + '</span><span class="tc' + (c.know === qs.length ? " full" : "") + '">' + c.know + "/" + qs.length + "</span></a>"
-        );
-      }).join("") +
+      S.topics
+        .map((t, ti) => {
+          const qs = topicCards(S, ti);
+          const c = counts(qs);
+          return (
+            '<a class="trow" href="#/topic/' + S.id + "/" + ti + '"><span class="tno">' + pad(ti + 1) + '</span><span class="tt">' + esc(t.t) +
+            bar(c, qs.length, "tbar") + '</span><span class="tc' + (c.know === qs.length ? " full" : "") + '">' + c.know + "/" + qs.length + "</span></a>"
+          );
+        })
+        .join("") +
       "</div>";
   }
 
   // ---------- тема ----------
   function viewTopic(ti) {
-    const t = TOPICS[ti];
-    const qs = ALL.filter((c) => c.ti === ti);
+    const t = S.topics[ti];
+    const qs = topicCards(S, ti);
     const c = counts(qs);
     app.innerHTML =
       '<div class="page"><header class="top"><a class="back" href="#/">Темы</a></header>' +
-      '<div class="thead"><span class="tno">Тема ' + pad(ti + 1) + "</span><h1>" + esc(t.t) + '</h1><p class="tsub">' + esc(t.s) + "</p></div>" +
-      '<section class="stats">' + bar(c, qs.length, "bar") +
-      '<div class="legend"><span><i class="dot know"></i><b>' + c.know + "</b> знаю</span><span><i class=\"dot learn\"></i><b>" + c.learn +
-      "</b> учу</span><span><i class=\"dot\"></i><b>" + c.new + "</b> новых</span></div></section>" +
-      '<div class="actions"><a class="btn btn-primary" href="#/learn/t' + ti + '">Учить тему · ' + qs.length + " вопросов</a></div>" +
+      '<div class="thead"><span class="tno">' + S.tab + " · тема " + pad(ti + 1) + "</span><h1>" + esc(t.t) + '</h1><p class="tsub">' + esc(t.s) + "</p></div>" +
+      '<section class="stats">' + bar(c, qs.length, "bar") + legend(c) + "</section>" +
+      '<div class="actions"><a class="btn btn-primary" href="#/learn/' + S.id + "/t" + ti + '">Учить тему · ' + qs.length + " " +
+      plural(qs.length, "вопрос", "вопроса", "вопросов") + "</a></div>" +
       '<div class="list">' +
       qs
-        .map((x) => '<a class="qrow" href="#/q/' + x.id + '"><i class="dot ' + status(x.id) + '"></i><span class="tt">' + esc(x.q) + "</span></a>")
+        .map(
+          (x) =>
+            '<a class="qrow" href="#/q/' + x.id + '"><i class="dot ' + status(x.id) + '"></i><span class="tt">' + (x.no ? "№ " + x.no + ". " : "") + esc(x.q) + "</span></a>"
+        )
         .join("") +
       "</div></div>";
     window.scrollTo(0, 0);
@@ -267,17 +313,16 @@
   // ---------- вопрос (чтение) ----------
   function viewQuestion(id) {
     const c = BY_ID.get(id);
-    const t = TOPICS[c.ti];
-    const qs = ALL.filter((x) => x.ti === c.ti);
+    const qs = topicCards(S, c.ti);
     const prev = qs[c.qi - 1];
     const next = qs[c.qi + 1];
     const s = status(id);
-    const backHref = fromSearch ? "#/" : "#/topic/" + c.ti;
+    const backHref = fromSearch ? "#/" : "#/topic/" + S.id + "/" + c.ti;
     app.innerHTML =
       '<div class="page"><header class="top"><a class="back" href="' + backHref + '">' + (fromSearch ? "Поиск" : "Тема " + pad(c.ti + 1)) +
       '</a><span class="sp"></span><span class="chip ' + s + '" id="chip">' + LABEL[s] + "</span></header>" +
-      '<p class="meta">' + pad(c.ti + 1) + " · " + esc(t.t) + " · вопрос " + (c.qi + 1) + " из " + qs.length + "</p>" +
-      '<h1 class="qh">' + esc(c.q) + "</h1>" +
+      meta(c, " · вопрос " + (c.qi + 1) + " из " + qs.length) +
+      '<h1 class="qh">' + esc(c.q) + "</h1>" + uzLine(c) +
       '<section class="key"><span class="lbl">Суть</span><div class="txt">' + inl(c.key) + "</div></section>" +
       (c.more ? '<div class="more flat"><div class="body"><span class="lbl">Подробнее</span>' + block(c.more) + "</div></div>" : "") +
       '<div class="row mark"><button class="btn btn-again" id="mBad">Не знаю</button><button class="btn btn-know" id="mGood">Знаю</button></div>' +
@@ -301,26 +346,26 @@
   }
 
   // ---------- учёба ----------
-  const validScope = (s) => s === "all" || s === "hard" || (/^t\d+$/.test(s) && TOPICS[+s.slice(1)] !== undefined);
-  function scopePool(scope) {
-    if (scope === "all") return ALL;
-    if (scope === "hard") return ALL.filter((c) => status(c.id) === "learn");
-    return ALL.filter((c) => c.ti === +scope.slice(1));
+  const validScope = (subj, s) => s === "all" || s === "hard" || (/^t\d+$/.test(s) && subj.topics[+s.slice(1)] !== undefined);
+  function scopePool(subj, scope) {
+    if (scope === "all") return subj.cards;
+    if (scope === "hard") return subj.cards.filter((c) => status(c.id) === "learn");
+    return topicCards(subj, +scope.slice(1));
   }
-  function newSession(scope) {
-    const pool = scopePool(scope);
+  function newSession(subj, scope) {
+    const pool = scopePool(subj, scope);
     const byAge = (a, b) => rec(a.id).b - rec(b.id).b || rec(a.id).t - rec(b.id).t;
     const learn = pool.filter((c) => status(c.id) === "learn").sort(byAge);
     const fresh = pool.filter((c) => status(c.id) === "new");
     const know = pool.filter((c) => status(c.id) === "know").sort(byAge);
     const size = scope.startsWith("t") ? pool.length : SESSION_SIZE;
     const picked = learn.concat(fresh, know).slice(0, size).map((c) => c.id);
-    return { scope, queue: shuffle(picked), total: picked.length, first: {}, done: 0, shown: false };
+    return { subj: subj.id, scope, queue: shuffle(picked), total: picked.length, first: {}, done: 0, shown: false };
   }
   function viewLearn(scope) {
-    let s = db.session && db.session.scope === scope && db.session.queue.length ? db.session : null;
+    let s = db.session && db.session.subj === S.id && db.session.scope === scope && db.session.queue.length ? db.session : null;
     if (!s) {
-      s = newSession(scope);
+      s = newSession(S, scope);
       db.session = s;
       save();
     }
@@ -330,9 +375,7 @@
     delete db.session;
     save();
   }
-  function exitHref(scope) {
-    return scope.startsWith("t") ? "#/topic/" + scope.slice(1) : "#/";
-  }
+  const exitHref = (s) => (s.scope.startsWith("t") ? "#/topic/" + s.subj + "/" + s.scope.slice(1) : "#/");
 
   function paintLearn() {
     const s = db.session;
@@ -345,10 +388,10 @@
     }
     const repeat = s.first[c.id] === "bad";
     app.innerHTML =
-      '<div class="study"><header class="ltop"><a class="icon" href="' + exitHref(s.scope) + '" id="lclose" aria-label="Закончить">✕</a>' +
+      '<div class="study"><header class="ltop"><a class="icon" href="' + exitHref(s) + '" id="lclose" aria-label="Закончить">✕</a>' +
       '<div class="lprog"><i style="width:' + ((s.done / s.total) * 100).toFixed(1) + '%"></i></div><span class="lcount">' + s.done + "/" + s.total + "</span></header>" +
-      '<main class="lbody"><p class="meta">' + pad(c.ti + 1) + " · " + esc(TOPICS[c.ti].t) + "</p>" +
-      '<h1 class="qh">' + esc(c.q) + "</h1>" +
+      '<main class="lbody">' + meta(c) +
+      '<h1 class="qh">' + esc(c.q) + "</h1>" + uzLine(c) +
       (repeat ? '<span class="again-note">Ещё раз — в прошлый раз не вспомнил</span>' : "") +
       '<div id="ans"' + (s.shown ? "" : " hidden") + ">" + answerHtml(c, !!db.prefs.moreOpen) + "</div></main>" +
       '<footer class="lbar' + (s.shown ? " two" : "") + '" id="lbar"></footer></div>';
@@ -399,17 +442,19 @@
   }
 
   function paintDone(s) {
+    const subj = SUBJ.get(s.subj);
     const ids = Object.keys(s.first);
     const okFirst = ids.filter((id) => s.first[id] === "ok").length;
     const again = ids.length - okFirst;
     const pct = s.total ? Math.round((okFirst / s.total) * 100) : 0;
     const R = 50;
     const L = 2 * Math.PI * R;
-    const all = counts(ALL);
-    const left = scopePool(s.scope).length;
+    const all = counts(subj.cards);
+    const left = scopePool(subj, s.scope).length;
     const scope = s.scope;
     const moreLabel = scope.startsWith("t") ? "Ещё раз тему" : scope === "hard" ? "Ещё трудные" : "Ещё " + SESSION_SIZE + " карточек";
     const canMore = scope !== "hard" || left > 0;
+    const exit = exitHref(s);
     endSession();
     app.innerHTML =
       '<div class="study"><div class="done">' +
@@ -420,14 +465,14 @@
       '<p class="big">' + (s.total ? (pct >= 80 ? "Отлично!" : pct >= 50 ? "Неплохо" : "Будем повторять") : "Тут пусто") + "</p>" +
       "<p>" + (s.total ? "С первого раза вспомнил " + okFirst + " из " + s.total : "Трудных карточек нет — всё, что учил, уже знаешь.") + "</p>" +
       '<div class="res"><div class="ok"><b>' + okFirst + '</b><span>знал сразу</span></div><div class="ag"><b>' + again + "</b><span>повторили</span></div></div>" +
-      '<p>Всего знаю ' + all.know + " из " + ALL.length + "</p></div>" +
+      "<p>" + subj.tab + ": знаю " + all.know + " из " + subj.cards.length + "</p></div>" +
       '<footer class="lbar">' +
       (canMore ? '<button class="btn btn-primary" id="more">' + moreLabel + "</button>" : "") +
-      '<a class="btn btn-soft" href="' + exitHref(scope) + '">' + (scope.startsWith("t") ? "К теме" : "На главную") + "</a></footer></div>";
+      '<a class="btn btn-soft" href="' + exit + '">' + (scope.startsWith("t") ? "К теме" : "На главную") + "</a></footer></div>";
     const more = document.getElementById("more");
     if (more)
       more.addEventListener("click", () => {
-        db.session = newSession(scope);
+        db.session = newSession(subj, scope);
         save();
         paintLearn();
       });
@@ -447,24 +492,39 @@
   });
 
   // ---------- переходы ----------
+  // #/s/<предмет> · #/topic/<предмет>/<тема> · #/q/<id> · #/learn/<предмет>/<all|hard|tN>.
+  // Ссылки первой версии без предмета (#/topic/3, #/learn/all) — это ОИС.
   let current = "";
   function route() {
     if (current === "home") homeScroll = window.scrollY;
-    const parts = location.hash.replace(/^#\/?/, "").split("/");
+    let parts = location.hash.replace(/^#\/?/, "").split("/");
     const a = parts[0];
-    const b = parts[1];
-    if (a === "topic" && TOPICS[+b] && b !== "") {
+    if ((a === "topic" || a === "learn") && !SUBJ.has(parts[1])) parts = [a, "ois"].concat(parts.slice(1));
+    if (a === "s" && SUBJ.has(parts[1])) {
+      if (S.id !== parts[1]) {
+        query = "";
+        homeScroll = 0;
+      }
+      setSubject(parts[1]);
+      current = "home";
+      fromSearch = false;
+      return viewHome();
+    }
+    if (a === "topic" && SUBJ.get(parts[1]).topics[+parts[2]] && parts[2] !== "") {
+      setSubject(parts[1]);
       current = "topic";
       fromSearch = false;
-      return viewTopic(+b);
+      return viewTopic(+parts[2]);
     }
-    if (a === "q" && BY_ID.has(b)) {
+    if (a === "q" && BY_ID.has(parts[1])) {
+      setSubject(BY_ID.get(parts[1]).subj);
       current = "q";
-      return viewQuestion(b);
+      return viewQuestion(parts[1]);
     }
-    if (a === "learn" && validScope(b)) {
+    if (a === "learn" && validScope(SUBJ.get(parts[1]), parts[2])) {
+      setSubject(parts[1]);
       current = "learn";
-      return viewLearn(b);
+      return viewLearn(parts[2]);
     }
     current = "home";
     fromSearch = false;

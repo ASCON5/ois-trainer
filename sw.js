@@ -1,7 +1,7 @@
 // Офлайн: все файлы приложения лежат в кэше. Ответ — сразу из кэша, а в фоне файл скачивается заново:
 // новая версия появляется при следующем запуске. Поменял файлы — подними VERSION.
-const VERSION = "ois-v2"; // v2: только темы 1–10 (на экзамене будут они)
-const FILES = ["./", "index.html", "app.css", "app.js", "data.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
+const VERSION = "ois-v3"; // v2: ОИС только темы 1–10; v3: второй предмет — Embedded systems
+const FILES = ["./", "index.html", "app.css", "app.js", "data.js", "emb.js", "uz.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
   // cache: "reload" — мимо кэша браузера: иначе новая версия могла бы взять старые файлы из него.
