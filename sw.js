@@ -1,6 +1,6 @@
 // Офлайн: все файлы приложения лежат в кэше. Ответ — сразу из кэша, а в фоне файл скачивается заново:
 // новая версия появляется при следующем запуске. Поменял файлы — подними VERSION.
-const VERSION = "ois-v3"; // v2: ОИС только темы 1–10; v3: второй предмет — Embedded systems
+const VERSION = "ois-v4"; // v2: ОИС только темы 1–10; v3: второй предмет — Embedded systems; v4: чужие кэши не трогаем
 const FILES = ["./", "index.html", "app.css", "app.js", "data.js", "emb.js", "uz.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -13,7 +13,8 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      // На ascon5.github.io живут и другие приложения (тренировки): удаляем только свои старые кэши.
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("ois-") && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
